@@ -44,14 +44,12 @@
     }
     #map-wrap.grabbing { cursor: grabbing; }
 
-    #map-img {
+    #map-canvas {
       position: absolute;
       top: 0; left: 0;
-      transform-origin: 0 0;
       display: block;
       touch-action: none;
       -webkit-touch-callout: none;
-      /* size set by JS after image loads */
     }
 
     /* ── VIGNETTE ── */
@@ -209,8 +207,8 @@
     }
 
     /* ── MAP CROSSFADE ── */
-    #map-img { transition: opacity 0.25s; }
-    #map-img.fading { opacity: 0; }
+    #map-canvas { transition: opacity 0.25s; }
+    #map-canvas.fading { opacity: 0; }
 
     /* ── LIST PANEL ── */
     #list-panel {
@@ -412,7 +410,7 @@
 
 <!-- Map -->
 <div id="map-wrap">
-  <img id="map-img" src="" alt="map" draggable="false" />
+  <canvas id="map-canvas"></canvas>
 </div>
 
 <!-- Top bar -->
@@ -563,18 +561,48 @@
 
   // Pan / zoom state
   let scale = 1;
-  let ox = 0, oy = 0;          // offset (top-left corner of image in viewport px)
-  let imgW = 0, imgH = 0;      // natural image dimensions
+  let ox = 0, oy = 0;
+  let imgW = 0, imgH = 0;
   let minScale = 1;
 
-  const img   = document.getElementById('map-img');
-  const wrap  = document.getElementById('map-wrap');
-  const yearEl = document.getElementById('year-display');
-  const typeLabel = document.getElementById('type-label');
-  const btnPrev = document.getElementById('btn-prev');
-  const btnNext = document.getElementById('btn-next');
-  const loader  = document.getElementById('loader');
-  const loaderBar = document.getElementById('loader-bar');
+  // Canvas render loop
+  const canvas = document.getElementById('map-canvas');
+  const ctx    = canvas.getContext('2d');
+  const wrap   = document.getElementById('map-wrap');
+  const yearEl      = document.getElementById('year-display');
+  const typeLabel   = document.getElementById('type-label');
+  const btnPrev     = document.getElementById('btn-prev');
+  const btnNext     = document.getElementById('btn-next');
+  const loader      = document.getElementById('loader');
+
+  let currentImage  = null;  // loaded HTMLImageElement
+  let nextImage     = null;  // being loaded
+  let rafId         = null;
+  let dirty         = true;  // needs redraw
+
+  function resizeCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const vw = window.innerWidth, vh = window.innerHeight;
+    canvas.width  = vw * dpr;
+    canvas.height = vh * dpr;
+    canvas.style.width  = vw + 'px';
+    canvas.style.height = vh + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true;
+  }
+
+  function draw() {
+    if (!dirty || !currentImage) return;
+    dirty = false;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    ctx.clearRect(0, 0, vw, vh);
+    ctx.drawImage(currentImage, ox, oy, imgW * scale, imgH * scale);
+  }
+
+  function renderLoop() {
+    draw();
+    rafId = requestAnimationFrame(renderLoop);
+  }
 
   // ── HELPERS ─────────────────────────────────────────────────────────────────
   function mapSrc(year, type) {
@@ -584,7 +612,6 @@
   function clampOffset(x, y, s) {
     const vw = window.innerWidth, vh = window.innerHeight;
     const iw = imgW * s, ih = imgH * s;
-    // If image smaller than viewport in a dimension, center it; else clamp
     const minX = iw > vw ? vw - iw : (vw - iw) / 2;
     const minY = ih > vh ? vh - ih : (vh - ih) / 2;
     const maxX = iw > vw ? 0 : (vw - iw) / 2;
@@ -598,7 +625,7 @@
   function applyTransform(x, y, s) {
     const c = clampOffset(x, y, s);
     ox = c.x; oy = c.y; scale = s;
-    img.style.transform = `matrix(${s},0,0,${s},${ox},${oy})`;
+    dirty = true;
   }
 
   function fitToScreen() {
@@ -606,47 +633,30 @@
     const vw = window.innerWidth, vh = window.innerHeight;
     const s = Math.max(vw / imgW, vh / imgH);
     minScale = s;
-    const cx = (vw - imgW * s) / 2;
-    const cy = (vh - imgH * s) / 2;
-    applyTransform(cx, cy, s);
+    applyTransform((vw - imgW * s) / 2, (vh - imgH * s) / 2, s);
   }
 
   // ── IMAGE LOAD ───────────────────────────────────────────────────────────────
-  let preloaded = {};
-
-  function preloadAll(cb) {
-    let total = YEARS.length * TYPES.length, done = 0;
-    YEARS.forEach(y => {
-      TYPES.forEach(t => {
-        const key = `${y}_${t}`;
-        const i = new Image();
-        i.onload = i.onerror = () => {
-          done++;
-          loaderBar.style.width = (done / total * 100) + '%';
-          if (done === total) cb();
-        };
-        i.src = mapSrc(y, t);
-        preloaded[key] = i;
-      });
-    });
-  }
-
   function showMap(year, type, animate) {
     const src = mapSrc(year, type);
-    if (animate) img.classList.add('fading');
-    setTimeout(() => {
-      img.src = src;
-      img.onload = () => {
-        if (!imgW) {
-          imgW = img.naturalWidth;
-          imgH = img.naturalHeight;
-          img.style.width  = imgW + 'px';
-          img.style.height = imgH + 'px';
-          fitToScreen();
-        }
-        img.classList.remove('fading');
-      };
-    }, animate ? 150 : 0);
+    if (animate) canvas.classList.add('fading');
+
+    const img = new Image();
+    nextImage = img;
+    img.onload = () => {
+      if (img !== nextImage) return; // superseded
+      if (!imgW) {
+        imgW = img.naturalWidth;
+        imgH = img.naturalHeight;
+        fitToScreen();
+      }
+      currentImage = img;
+      dirty = true;
+      if (animate) {
+        setTimeout(() => canvas.classList.remove('fading'), 20);
+      }
+    };
+    img.src = src;
   }
 
   function updateUI() {
@@ -666,7 +676,6 @@
   btnNext.addEventListener('click', () => {
     if (yearIdx < YEARS.length - 1) { yearIdx++; updateUI(); }
   });
-
   document.getElementById('type-toggle').addEventListener('click', () => {
     typeIdx = (typeIdx + 1) % TYPES.length;
     updateUI();
@@ -674,31 +683,14 @@
 
   // ── TOUCH: PAN & PINCH ───────────────────────────────────────────────────────
   let lastTouches = null;
-  let panStart = null;
-  let isPinching = false;
-  let rafPending = false;
-  let pendingX, pendingY, pendingS;
+  let panStart    = null;
+  let isPinching  = false;
 
   function getTouchMidpoint(t1, t2) {
-    return {
-      x: (t1.clientX + t2.clientX) / 2,
-      y: (t1.clientY + t2.clientY) / 2
-    };
+    return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
   }
   function getTouchDist(t1, t2) {
-    const dx = t1.clientX - t2.clientX, dy = t1.clientY - t2.clientY;
-    return Math.hypot(dx, dy);
-  }
-
-  function scheduleTransform(x, y, s) {
-    pendingX = x; pendingY = y; pendingS = s;
-    if (!rafPending) {
-      rafPending = true;
-      requestAnimationFrame(() => {
-        applyTransform(pendingX, pendingY, pendingS);
-        rafPending = false;
-      });
-    }
+    return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
   }
 
   wrap.addEventListener('touchstart', e => {
@@ -719,27 +711,22 @@
     const touches = Array.from(e.touches);
 
     if (touches.length === 1 && panStart && !isPinching) {
-      const dx = touches[0].clientX - panStart.cx;
-      const dy = touches[0].clientY - panStart.cy;
-      // Direct applyTransform from panStart anchor — no drift
-      applyTransform(panStart.ox + dx, panStart.oy + dy, scale);
-
+      applyTransform(
+        panStart.ox + touches[0].clientX - panStart.cx,
+        panStart.oy + touches[0].clientY - panStart.cy,
+        scale
+      );
     } else if (touches.length === 2 && lastTouches.length >= 2) {
       isPinching = true;
-      const prevDist = getTouchDist(lastTouches[0], lastTouches[1]);
-      const newDist  = getTouchDist(touches[0], touches[1]);
-      const factor   = newDist / prevDist;
-
-      const prevMid = getTouchMidpoint(lastTouches[0], lastTouches[1]);
-      const mid     = getTouchMidpoint(touches[0], touches[1]);
-
+      const prevMid  = getTouchMidpoint(lastTouches[0], lastTouches[1]);
+      const mid      = getTouchMidpoint(touches[0], touches[1]);
+      const factor   = getTouchDist(touches[0], touches[1]) / getTouchDist(lastTouches[0], lastTouches[1]);
       const newScale = Math.min(Math.max(scale * factor, minScale), minScale * 12);
-
-      // Zoom toward midpoint + pan delta in one calculation
-      const zx = mid.x - (mid.x - ox) * (newScale / scale) + (mid.x - prevMid.x);
-      const zy = mid.y - (mid.y - oy) * (newScale / scale) + (mid.y - prevMid.y);
-
-      scheduleTransform(zx, zy, newScale);
+      applyTransform(
+        mid.x - (mid.x - ox) * (newScale / scale) + (mid.x - prevMid.x),
+        mid.y - (mid.y - oy) * (newScale / scale) + (mid.y - prevMid.y),
+        newScale
+      );
     }
 
     lastTouches = touches;
@@ -774,11 +761,13 @@
 
   wrap.addEventListener('wheel', e => {
     e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.12 : 0.89;
+    const factor   = e.deltaY < 0 ? 1.12 : 0.89;
     const newScale = Math.min(Math.max(scale * factor, minScale), minScale * 12);
-    const nx = e.clientX - (e.clientX - ox) * (newScale / scale);
-    const ny = e.clientY - (e.clientY - oy) * (newScale / scale);
-    applyTransform(nx, ny, newScale);
+    applyTransform(
+      e.clientX - (e.clientX - ox) * (newScale / scale),
+      e.clientY - (e.clientY - oy) * (newScale / scale),
+      newScale
+    );
   }, { passive: false });
 
   // ── DOUBLE-TAP TO RESET ──────────────────────────────────────────────────────
@@ -796,11 +785,11 @@
 
   // ── RESIZE ───────────────────────────────────────────────────────────────────
   window.addEventListener('resize', () => {
+    resizeCanvas();
     if (!imgW || !imgH) return;
     const vw = window.innerWidth, vh = window.innerHeight;
     const s = Math.max(vw / imgW, vh / imgH);
     minScale = s;
-    // Keep current position/zoom, just clamp so it stays valid
     applyTransform(ox, oy, Math.max(scale, minScale));
   });
 
@@ -808,101 +797,74 @@
   let selectedCountry = null;
 
   function initList() {
-    const listToggle = document.getElementById('list-toggle');
-    const listPanel = document.getElementById('list-panel');
-    const listSearch = document.getElementById('list-search');
+    const listToggle    = document.getElementById('list-toggle');
+    const listPanel     = document.getElementById('list-panel');
+    const listSearch    = document.getElementById('list-search');
     const listCountries = document.getElementById('list-countries');
 
-    // Toggle list
-    listToggle.addEventListener('click', () => {
-      listPanel.classList.toggle('open');
-    });
+    listToggle.addEventListener('click', () => listPanel.classList.toggle('open'));
 
-    // Render countries
     function renderCountries(filter = '') {
       listCountries.innerHTML = '';
-      const filtered = COUNTRIES.filter(c => 
-        c.name.toLowerCase().includes(filter.toLowerCase())
-      );
-
-      filtered.forEach(country => {
-        const item = document.createElement('div');
-        item.className = 'list-item';
-        item.innerHTML = `
-          <div class="list-flag">
-            <img src="${country.flag}" alt="${country.name}">
-          </div>
-          <div class="list-name">${country.name}</div>
-        `;
-        item.addEventListener('click', () => {
-          selectCountry(country);
-          listPanel.classList.remove('open');
+      COUNTRIES.filter(c => c.name.toLowerCase().includes(filter.toLowerCase()))
+        .forEach(country => {
+          const item = document.createElement('div');
+          item.className = 'list-item';
+          item.innerHTML = `
+            <div class="list-flag"><img src="${country.flag}" alt="${country.name}"></div>
+            <div class="list-name">${country.name}</div>
+          `;
+          item.addEventListener('click', () => {
+            selectCountry(country);
+            listPanel.classList.remove('open');
+          });
+          listCountries.appendChild(item);
         });
-        listCountries.appendChild(item);
-      });
     }
 
-    // Search
-    listSearch.addEventListener('input', (e) => {
-      renderCountries(e.target.value);
-    });
-
+    listSearch.addEventListener('input', e => renderCountries(e.target.value));
     renderCountries();
   }
 
+  // ── ANIMATE TO ───────────────────────────────────────────────────────────────
   function animateTo(targetX, targetY, targetScale, duration, onDone) {
     const startX = ox, startY = oy, startScale = scale;
     const startTime = performance.now();
-
-    function ease(t) {
-      // Cubic ease-in-out
-      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    }
-
+    function ease(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
     function step(now) {
-      const elapsed = now - startTime;
-      const t = Math.min(elapsed / duration, 1);
-      const e = ease(t);
-
-      const cx = startX + (targetX - startX) * e;
-      const cy = startY + (targetY - startY) * e;
-      const cs = startScale + (targetScale - startScale) * e;
-      applyTransform(cx, cy, cs);
-
-      if (t < 1) {
-        requestAnimationFrame(step);
-      } else {
-        if (onDone) onDone();
-      }
+      const t = Math.min((now - startTime) / duration, 1);
+      applyTransform(
+        startX + (targetX - startX) * ease(t),
+        startY + (targetY - startY) * ease(t),
+        startScale + (targetScale - startScale) * ease(t)
+      );
+      if (t < 1) requestAnimationFrame(step);
+      else if (onDone) onDone();
     }
-
     requestAnimationFrame(step);
   }
 
   function selectCountry(country) {
     selectedCountry = country;
     const newScale = Math.min(minScale * 4, 3);
-    const nx = window.innerWidth / 2 - country.coords.x * newScale;
-    const ny = window.innerHeight / 2 - country.coords.y * newScale;
-    animateTo(nx, ny, newScale, 900, () => showInfo(country));
+    animateTo(
+      window.innerWidth  / 2 - country.coords.x * newScale,
+      window.innerHeight / 2 - country.coords.y * newScale,
+      newScale, 900, () => showInfo(country)
+    );
   }
 
   function showInfo(country) {
     const popup = document.getElementById('info-popup');
-    document.getElementById('info-title').textContent = country.name;
-    document.getElementById('info-flag').src = country.flag;
+    document.getElementById('info-title').textContent   = country.name;
+    document.getElementById('info-flag').src            = country.flag;
     document.getElementById('info-content').textContent = country.info;
-    
     popup.classList.add('show');
-    
-    // Store wiki link for click handler
     window.currentCountryWiki = country.wiki;
   }
 
   function openWikipedia() {
-    if (window.currentCountryWiki) {
-      window.open(window.currentCountryWiki, '_blank');
-    }
+    if (window.currentCountryWiki) window.open(window.currentCountryWiki, '_blank');
   }
 
   function closeInfo() {
@@ -912,42 +874,36 @@
   initList();
 
   // ── INIT ─────────────────────────────────────────────────────────────────────
-  function initMap() {
-    // Update UI labels/buttons without triggering showMap
-    const year = YEARS[yearIdx];
-    const type = TYPES[typeIdx];
-    yearEl.textContent = year;
-    typeLabel.textContent = TYPE_LABELS[type];
-    btnPrev.disabled = yearIdx === 0;
-    btnNext.disabled = yearIdx === YEARS.length - 1;
+  resizeCanvas();
+  renderLoop();
 
-    img.onload = () => {
-      if (!imgW) {
-        imgW = img.naturalWidth;
-        imgH = img.naturalHeight;
-        img.style.width  = imgW + 'px';
-        img.style.height = imgH + 'px';
-        fitToScreen();
-      }
-      loader.classList.add('hidden');
-      // Preload rest silently after first frame
-      requestAnimationFrame(() => {
-        YEARS.forEach(y => TYPES.forEach(t => {
-          if (!(y === YEARS[0] && t === TYPES[0])) {
-            const i = new Image(); i.src = mapSrc(y, t);
-          }
-        }));
-      });
-    };
-    img.onerror = () => {
-      loader.classList.add('hidden');
-    };
-    img.src = mapSrc(year, type);
-    // Fallback: hide loader after 4s regardless
-    setTimeout(() => loader.classList.add('hidden'), 4000);
-  }
+  // Labels/buttons
+  yearEl.textContent  = YEARS[yearIdx];
+  typeLabel.textContent = TYPE_LABELS[TYPES[typeIdx]];
+  btnPrev.disabled = true;
+  btnNext.disabled = false;
 
-  initMap();
+  // Load first map, then silently preload the rest
+  const firstImg = new Image();
+  firstImg.onload = () => {
+    imgW = firstImg.naturalWidth;
+    imgH = firstImg.naturalHeight;
+    fitToScreen();
+    currentImage = firstImg;
+    dirty = true;
+    loader.classList.add('hidden');
+    // Preload others after paint
+    requestAnimationFrame(() => {
+      YEARS.forEach(y => TYPES.forEach(t => {
+        if (!(y === YEARS[0] && t === TYPES[0])) {
+          const i = new Image(); i.src = mapSrc(y, t);
+        }
+      }));
+    });
+  };
+  firstImg.onerror = () => loader.classList.add('hidden');
+  firstImg.src = mapSrc(YEARS[0], TYPES[0]);
+  setTimeout(() => loader.classList.add('hidden'), 4000);
 </script>
 </body>
 </html>
