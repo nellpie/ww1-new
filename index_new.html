@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#1a1008" />
-  <title>WWI Harita</title>
+  <title>WW1 Guild</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icon.png" />
   <style>
@@ -48,8 +48,9 @@
       position: absolute;
       top: 0; left: 0;
       transform-origin: 0 0;
-      will-change: transform;
       display: block;
+      touch-action: none;
+      -webkit-touch-callout: none;
       /* size set by JS after image loads */
     }
 
@@ -597,7 +598,7 @@
   function applyTransform(x, y, s) {
     const c = clampOffset(x, y, s);
     ox = c.x; oy = c.y; scale = s;
-    img.style.transform = `translate(${ox}px,${oy}px) scale(${scale})`;
+    img.style.transform = `matrix(${s},0,0,${s},${ox},${oy})`;
   }
 
   function fitToScreen() {
@@ -720,7 +721,8 @@
     if (touches.length === 1 && panStart && !isPinching) {
       const dx = touches[0].clientX - panStart.cx;
       const dy = touches[0].clientY - panStart.cy;
-      scheduleTransform(panStart.ox + dx, panStart.oy + dy, scale);
+      // Direct applyTransform from panStart anchor — no drift
+      applyTransform(panStart.ox + dx, panStart.oy + dy, scale);
 
     } else if (touches.length === 2 && lastTouches.length >= 2) {
       isPinching = true;
@@ -910,28 +912,42 @@
   initList();
 
   // ── INIT ─────────────────────────────────────────────────────────────────────
-  // Try to load first map immediately, preload rest in background
-  img.src = mapSrc(YEARS[0], TYPES[0]);
-  img.onload = () => {
-    imgW = img.naturalWidth;
-    imgH = img.naturalHeight;
-    img.style.width  = imgW + 'px';
-    img.style.height = imgH + 'px';
-    fitToScreen();
-    loader.classList.add('hidden');
-    // preload rest silently
-    YEARS.forEach(y => TYPES.forEach(t => {
-      if (!(y === 1914 && t === 'country')) {
-        const i = new Image(); i.src = mapSrc(y, t);
-      }
-    }));
-  };
-  img.onerror = () => {
-    // maps folder might be missing — still hide loader
-    loader.classList.add('hidden');
-  };
+  function initMap() {
+    // Update UI labels/buttons without triggering showMap
+    const year = YEARS[yearIdx];
+    const type = TYPES[typeIdx];
+    yearEl.textContent = year;
+    typeLabel.textContent = TYPE_LABELS[type];
+    btnPrev.disabled = yearIdx === 0;
+    btnNext.disabled = yearIdx === YEARS.length - 1;
 
-  updateUI();
+    img.onload = () => {
+      if (!imgW) {
+        imgW = img.naturalWidth;
+        imgH = img.naturalHeight;
+        img.style.width  = imgW + 'px';
+        img.style.height = imgH + 'px';
+        fitToScreen();
+      }
+      loader.classList.add('hidden');
+      // Preload rest silently after first frame
+      requestAnimationFrame(() => {
+        YEARS.forEach(y => TYPES.forEach(t => {
+          if (!(y === YEARS[0] && t === TYPES[0])) {
+            const i = new Image(); i.src = mapSrc(y, t);
+          }
+        }));
+      });
+    };
+    img.onerror = () => {
+      loader.classList.add('hidden');
+    };
+    img.src = mapSrc(year, type);
+    // Fallback: hide loader after 4s regardless
+    setTimeout(() => loader.classList.add('hidden'), 4000);
+  }
+
+  initMap();
 </script>
 </body>
 </html>
