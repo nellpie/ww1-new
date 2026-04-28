@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#1a1008" />
+  <title>WWI Harita</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon.png" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=IM+Fell+English&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0e0b06;
+      --parchment: #c9a96e;
+      --parchment-dark: #8b6914;
+      --red: #8b1a1a;
+      --cream: #f0e6cc;
+      --ui-bg: rgba(14, 11, 6, 0.82);
+      --border: rgba(201, 169, 110, 0.35);
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      font-family: 'Cinzel', serif;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* ── MAP CONTAINER ── */
+    #map-wrap {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      cursor: grab;
+    }
+    #map-wrap.grabbing { cursor: grabbing; }
+
+    #map-img {
+      position: absolute;
+      top: 0; left: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+      display: block;
+      /* size set by JS after image loads */
+    }
+
+    /* ── VIGNETTE ── */
+    #vignette {
+      position: fixed; inset: 0;
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.75) 100%);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* ── TOP BAR ── */
+    #top-bar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      pointer-events: none;
+    }
+
+    #title-text {
+      font-family: 'Cinzel', serif;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.22em;
+      color: var(--parchment);
+      text-transform: uppercase;
+      opacity: 0.7;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.8);
+    }
+
+    /* ── BOTTOM CONTROLS ── */
+    #controls {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      padding: 0 20px 28px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      z-index: 20;
+      pointer-events: none;
+    }
+
+    /* Map type toggle */
+    #type-toggle {
+      pointer-events: all;
+      background: var(--ui-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: border-color 0.2s, background 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #type-toggle:active { background: rgba(201,169,110,0.15); }
+
+    #type-icon {
+      width: 18px; height: 18px;
+      opacity: 0.85;
+    }
+
+    #type-label {
+      font-family: 'Cinzel', serif;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: var(--parchment);
+      text-transform: uppercase;
+    }
+
+    /* Year navigator */
+    #year-nav {
+      pointer-events: all;
+      display: flex;
+      align-items: center;
+      gap: 0;
+      background: var(--ui-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    .year-btn {
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      color: #4fc3f7;
+      font-size: 18px;
+      transition: background 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      border: none;
+      background: transparent;
+      font-family: 'Cinzel', serif;
+    }
+    .year-btn:active { background: rgba(79,195,247,0.12); }
+    .year-btn:disabled { color: rgba(79,195,247,0.25); cursor: default; }
+
+    #year-sep-l, #year-sep-r {
+      width: 1px; height: 24px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    #year-display {
+      width: 72px;
+      text-align: center;
+      font-family: 'IM Fell English', serif;
+      font-size: 22px;
+      color: var(--cream);
+      letter-spacing: 0.04em;
+      line-height: 44px;
+    }
+
+    /* ── LOADING OVERLAY ── */
+    #loader {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px;
+      z-index: 100;
+      transition: opacity 0.4s;
+    }
+    #loader.hidden { opacity: 0; pointer-events: none; }
+
+    #loader-title {
+      font-family: 'Cinzel', serif;
+      font-size: 15px;
+      letter-spacing: 0.3em;
+      color: var(--parchment);
+      text-transform: uppercase;
+    }
+
+    #loader-bar-wrap {
+      width: 140px; height: 2px;
+      background: rgba(201,169,110,0.2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #loader-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--parchment);
+      border-radius: 2px;
+      transition: width 0.3s;
+    }
+
+    /* ── MAP CROSSFADE ── */
+    #map-img { transition: opacity 0.25s; }
+    #map-img.fading { opacity: 0; }
+
+    /* ── LIST PANEL ── */
+    #list-panel {
+      position: fixed;
+      bottom: 120px;
+      left: 20px;
+      width: 280px;
+      max-height: 400px;
+      background: var(--ui-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: none;
+      flex-direction: column;
+      z-index: 25;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    }
+    #list-panel.open { display: flex; }
+
+    #list-search {
+      padding: 10px;
+      background: rgba(0,0,0,0.2);
+      border: none;
+      border-bottom: 1px solid var(--border);
+      color: var(--cream);
+      font-family: 'Cinzel', serif;
+      font-size: 11px;
+      border-radius: 8px 8px 0 0;
+    }
+    #list-search::placeholder { color: #8b7355; }
+    #list-search:focus { outline: none; border-bottom-color: var(--parchment); }
+
+    #list-countries {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .list-item {
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.2s;
+    }
+    .list-item:hover { background: rgba(201,169,110,0.1); }
+
+    .list-flag {
+      width: 32px;
+      height: 21px;
+      background: #333;
+      border-radius: 2px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .list-flag img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .list-name {
+      font-size: 11px;
+      color: var(--cream);
+      flex: 1;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    #list-toggle {
+      position: fixed;
+      bottom: 28px;
+      left: 20px;
+      width: 44px;
+      height: 44px;
+      background: var(--ui-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 24;
+      pointer-events: all;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s;
+    }
+    #list-toggle:active { background: rgba(201,169,110,0.15); }
+
+    /* ── INFO POPUP ── */
+    #info-overlay {
+      display: none;
+    }
+    #info-overlay.open {
+      display: block;
+    }
+
+    #info-popup {
+      position: fixed;
+      bottom: 130px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--ui-bg);
+      border: 2px solid var(--parchment);
+      border-radius: 8px;
+      padding: 20px;
+      width: 95%;
+      max-width: 800px;
+      max-height: 280px;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+      z-index: 200;
+      display: none;
+    }
+    #info-popup.show {
+      display: block;
+    }
+
+    .info-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+
+    .info-flag {
+      width: 50px;
+      height: 33px;
+      background: #333;
+      border-radius: 4px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .info-flag img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .info-title {
+      font-size: 16px;
+      color: var(--cream);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      font-family: 'Cinzel', serif;
+      cursor: pointer;
+      transition: color 0.2s;
+      flex: 1;
+    }
+    .info-title:hover { color: var(--parchment); }
+
+    .info-content {
+      color: #c9a96e;
+      font-size: 12px;
+      line-height: 1.5;
+      font-family: 'Times New Roman', serif;
+    }
+
+    .info-close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: none;
+      border: none;
+      color: var(--parchment);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 0;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    @media (max-width: 768px) {
+      #list-panel { width: 240px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loader">
+  <div id="loader-title">WWI · 1914–1918</div>
+  <div id="loader-bar-wrap"><div id="loader-bar"></div></div>
+</div>
+
+<!-- Vignette -->
+<div id="vignette"></div>
+
+<!-- Map -->
+<div id="map-wrap">
+  <img id="map-img" src="" alt="map" draggable="false" />
+</div>
+
+<!-- Top bar -->
+<div id="top-bar">
+  <span id="title-text">Birinci Dünya Savaşı</span>
+</div>
+
+<!-- Bottom controls -->
+<div id="controls">
+  <div id="type-toggle" role="button" aria-label="Harita türünü değiştir">
+    <svg id="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+         stroke-linecap="round" stroke-linejoin="round" style="color:var(--parchment)">
+      <path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3V6z"/>
+      <line x1="9" y1="3" x2="9" y2="18"/>
+      <line x1="15" y1="6" x2="15" y2="21"/>
+    </svg>
+    <span id="type-label">Ülke Sınırları</span>
+  </div>
+
+  <div id="year-nav">
+    <button class="year-btn" id="btn-prev" aria-label="Önceki yıl">&#8249;</button>
+    <div id="year-sep-l"></div>
+    <div id="year-display">1914</div>
+    <div id="year-sep-r"></div>
+    <button class="year-btn" id="btn-next" aria-label="Sonraki yıl">&#8250;</button>
+  </div>
+</div>
+
+<!-- List Toggle Button -->
+<button id="list-toggle">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:20px;height:20px;color:var(--parchment)">
+    <line x1="8" y1="6" x2="21" y2="6"></line>
+    <line x1="8" y1="12" x2="21" y2="12"></line>
+    <line x1="8" y1="18" x2="21" y2="18"></line>
+  </svg>
+</button>
+
+<!-- List Panel -->
+<div id="list-panel">
+  <input id="list-search" type="text" placeholder="Ülke ara...">
+  <div id="list-countries"></div>
+</div>
+
+<!-- Info Overlay -->
+<div id="info-overlay" onclick="closeInfo()"></div>
+
+<!-- Info Popup -->
+<div id="info-popup">
+  <button class="info-close" onclick="closeInfo()">×</button>
+  <div class="info-header">
+    <div class="info-flag"><img id="info-flag" src="" alt="flag"></div>
+    <h2 class="info-title" id="info-title" onclick="openWikipedia()">Ülke Adı</h2>
+  </div>
+  <div class="info-content" id="info-content">Bilgi yükleniyor...</div>
+</div>
+
+<script>
+  // ── COUNTRIES DATA ──────────────────────────────────────────────────────────
+  const COUNTRIES = [
+    {
+      name: 'Almanya',
+      flag: './flags/almanya.png',
+      coords: { x: 2000, y: 1500 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Almanya',
+      info: 'İttifak Devleti. Savaşın ana başlatıcısı. Batı cephesinde Fransa\'ya, Doğu cephesinde Rusya\'ya karşı savaştı. 1918\'de yenilgiye uğradı.'
+    },
+    {
+      name: 'Fransa',
+      flag: './flags/fransa.png',
+      coords: { x: 1500, y: 1200 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Fransa',
+      info: 'İtilaf Devleti. Batı cephesinin ana güçlerinden. Verdun ve Somme gibi büyük savaşlara katıldı. Ağır kayıplar verdi ama galip çıktı.'
+    },
+    {
+      name: 'Belçika',
+      flag: './flags/belcika.png',
+      coords: { x: 1400, y: 1100 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Belçika',
+      info: 'İtilaf Devleti. Almanya tarafından işgal edildi. Batı cephesinde ana savaş alanı oldu. Büyük tahribat yaşadı.'
+    },
+    {
+      name: 'Romanya',
+      flag: './flags/romanya.png',
+      coords: { x: 2300, y: 1500 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Romanya',
+      info: 'İtilaf Devleti (1916\'dan sonra). Doğu cephesinde savaştı. Avusturya-Macaristan ve Almanya tarafından işgal edildi. Ağır kayıplar verdi.'
+    },
+    {
+      name: 'Sırbistan',
+      flag: './flags/sirbistan.png',
+      coords: { x: 2100, y: 1600 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Sırbistan',
+      info: 'İtilaf Devleti. Arcduke Ferdinand\'ın suikastı ile savaş başladı. Avusturya-Macaristan\'a karşı savaştı. Ülke işgal edildi ama direnişte kaldı.'
+    },
+    {
+      name: 'Rus İmparatorluğu',
+      flag: './flags/rusya.png',
+      coords: { x: 3500, y: 1500 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Rusya',
+      info: 'İtilaf Devleti. Doğu cephesinde Almanya ve Avusturya-Macaristan\'a karşı savaştı. Ağır kayıplar verdi. 1917 Bolşevik Devrimi sonrası savaştan çekildi.'
+    },
+    {
+      name: 'Osmanlı İmparatorluğu',
+      flag: './flags/turkiye.png',
+      coords: { x: 3000, y: 2500 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Osmanlı_İmparatorluğu',
+      info: 'İttifak Devleti. Almanya ve Avusturya-Macaristan ile birlikte savaştı. Doğu cephesinde Rusya\'ya karşı, Ege ve Akdeniz\'de İtilaf devletlerine karşı savaştı. Savaş sonunda yıkıldı.'
+    },
+    {
+      name: 'Avusturya-Macaristan İmparatorluğu',
+      flag: './flags/avusturya.png',
+      coords: { x: 2200, y: 1400 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Avusturya-Macaristan',
+      info: 'İttifak Devleti. Savaşın başlatıcısı. Doğu cephesinde Rusya ve Sırbistan\'a, Batı\'da İtalya\'ya karşı savaştı. Savaş sonunda devlet olarak yıkıldı.'
+    },
+    {
+      name: 'Birleşik Krallık',
+      flag: './flags/ingiltere.png',
+      coords: { x: 1200, y: 900 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_İngiltere',
+      info: 'İtilaf Devleti. Deniz hakimiyetini kullanarak Almanya\'yı blokaj altında tuttu. Batı cephesinde ve kolonyal cephelerde savaştı. Savaşın galibi oldu.'
+    },
+    {
+      name: 'Senusiler',
+      flag: './flags/senusiler.png',
+      coords: { x: 1800, y: 2200 },
+      wiki: 'https://tr.wikipedia.org/wiki/Senusiyye',
+      info: 'İttifak Devleti (taraftarı). Kuzey Afrika\'da İtilaf kuvvetlerine karşı mücadele etti. Osmanlı ve Almanya tarafından desteklendi. Savaş sonunda hezimet yaşadı.'
+    },
+    {
+      name: 'İran',
+      flag: './flags/iran.png',
+      coords: { x: 3800, y: 2000 },
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_İran',
+      info: 'Tarafsız (resmi olarak). Rusya ve İngiltere\'nin nüfuz alanında bölünmüştü. Savaş sırasında işgal altında yaşadı. Ülkede kaos ve açlık yaşandı.'
+    }
+  ];
+
+  // ── CONFIG ──────────────────────────────────────────────────────────────────
+  const YEARS = [1914, 1915, 1916, 1917, 1918];
+  const TYPES = ['country', 'alliance'];
+  const TYPE_LABELS = { country: 'Ülke Sınırları', alliance: 'İttifak Haritası' };
+  const MAP_DIR = './maps/';
+
+  // ── STATE ───────────────────────────────────────────────────────────────────
+  let yearIdx = 0;
+  let typeIdx = 0;
+
+  // Pan / zoom state
+  let scale = 1;
+  let ox = 0, oy = 0;          // offset (top-left corner of image in viewport px)
+  let imgW = 0, imgH = 0;      // natural image dimensions
+  let minScale = 1;
+
+  const img   = document.getElementById('map-img');
+  const wrap  = document.getElementById('map-wrap');
+  const yearEl = document.getElementById('year-display');
+  const typeLabel = document.getElementById('type-label');
+  const btnPrev = document.getElementById('btn-prev');
+  const btnNext = document.getElementById('btn-next');
+  const loader  = document.getElementById('loader');
+  const loaderBar = document.getElementById('loader-bar');
+
+  // ── HELPERS ─────────────────────────────────────────────────────────────────
+  function mapSrc(year, type) {
+    return `${MAP_DIR}${year}_${type}.jpg`;
+  }
+
+  function clampOffset(x, y, s) {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const iw = imgW * s, ih = imgH * s;
+    // If image smaller than viewport in a dimension, center it; else clamp
+    const minX = iw > vw ? vw - iw : (vw - iw) / 2;
+    const minY = ih > vh ? vh - ih : (vh - ih) / 2;
+    const maxX = iw > vw ? 0 : (vw - iw) / 2;
+    const maxY = ih > vh ? 0 : (vh - ih) / 2;
+    return {
+      x: Math.min(maxX, Math.max(minX, x)),
+      y: Math.min(maxY, Math.max(minY, y))
+    };
+  }
+
+  function applyTransform(x, y, s) {
+    const c = clampOffset(x, y, s);
+    ox = c.x; oy = c.y; scale = s;
+    img.style.transform = `translate(${ox}px,${oy}px) scale(${scale})`;
+  }
+
+  function fitToScreen() {
+    if (!imgW || !imgH) return;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const s = Math.max(vw / imgW, vh / imgH);
+    minScale = s;
+    const cx = (vw - imgW * s) / 2;
+    const cy = (vh - imgH * s) / 2;
+    applyTransform(cx, cy, s);
+  }
+
+  // ── IMAGE LOAD ───────────────────────────────────────────────────────────────
+  let preloaded = {};
+
+  function preloadAll(cb) {
+    let total = YEARS.length * TYPES.length, done = 0;
+    YEARS.forEach(y => {
+      TYPES.forEach(t => {
+        const key = `${y}_${t}`;
+        const i = new Image();
+        i.onload = i.onerror = () => {
+          done++;
+          loaderBar.style.width = (done / total * 100) + '%';
+          if (done === total) cb();
+        };
+        i.src = mapSrc(y, t);
+        preloaded[key] = i;
+      });
+    });
+  }
+
+  function showMap(year, type, animate) {
+    const src = mapSrc(year, type);
+    if (animate) img.classList.add('fading');
+    setTimeout(() => {
+      img.src = src;
+      img.onload = () => {
+        if (!imgW) {
+          imgW = img.naturalWidth;
+          imgH = img.naturalHeight;
+          img.style.width  = imgW + 'px';
+          img.style.height = imgH + 'px';
+          fitToScreen();
+        }
+        img.classList.remove('fading');
+      };
+    }, animate ? 150 : 0);
+  }
+
+  function updateUI() {
+    const year = YEARS[yearIdx];
+    const type = TYPES[typeIdx];
+    yearEl.textContent = year;
+    typeLabel.textContent = TYPE_LABELS[type];
+    btnPrev.disabled = yearIdx === 0;
+    btnNext.disabled = yearIdx === YEARS.length - 1;
+    showMap(year, type, true);
+  }
+
+  // ── YEAR NAV ─────────────────────────────────────────────────────────────────
+  btnPrev.addEventListener('click', () => {
+    if (yearIdx > 0) { yearIdx--; updateUI(); }
+  });
+  btnNext.addEventListener('click', () => {
+    if (yearIdx < YEARS.length - 1) { yearIdx++; updateUI(); }
+  });
+
+  document.getElementById('type-toggle').addEventListener('click', () => {
+    typeIdx = (typeIdx + 1) % TYPES.length;
+    updateUI();
+  });
+
+  // ── TOUCH: PAN & PINCH ───────────────────────────────────────────────────────
+  let lastTouches = null;
+  let panStart = null;
+
+  function getTouchMidpoint(t1, t2) {
+    return {
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2
+    };
+  }
+  function getTouchDist(t1, t2) {
+    const dx = t1.clientX - t2.clientX, dy = t1.clientY - t2.clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  wrap.addEventListener('touchstart', e => {
+    e.preventDefault();
+    lastTouches = Array.from(e.touches);
+    if (e.touches.length === 1) {
+      panStart = { ox, oy, cx: e.touches[0].clientX, cy: e.touches[0].clientY };
+    }
+    wrap.classList.add('grabbing');
+  }, { passive: false });
+
+  wrap.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const touches = Array.from(e.touches);
+
+    if (touches.length === 1 && panStart) {
+      const dx = touches[0].clientX - panStart.cx;
+      const dy = touches[0].clientY - panStart.cy;
+      applyTransform(panStart.ox + dx, panStart.oy + dy, scale);
+
+    } else if (touches.length === 2 && lastTouches.length >= 2) {
+      const prevDist = getTouchDist(lastTouches[0], lastTouches[1]);
+      const newDist  = getTouchDist(touches[0], touches[1]);
+      const factor   = newDist / prevDist;
+
+      const mid = getTouchMidpoint(touches[0], touches[1]);
+      const newScale = Math.min(Math.max(scale * factor, minScale), minScale * 12);
+
+      // Zoom toward midpoint
+      const nx = mid.x - (mid.x - ox) * (newScale / scale);
+      const ny = mid.y - (mid.y - oy) * (newScale / scale);
+      applyTransform(nx, ny, newScale);
+
+      // Also pan with midpoint movement
+      const prevMid = getTouchMidpoint(lastTouches[0], lastTouches[1]);
+      const pdx = mid.x - prevMid.x, pdy = mid.y - prevMid.y;
+      applyTransform(ox + pdx, oy + pdy, scale);
+    }
+
+    lastTouches = touches;
+  }, { passive: false });
+
+  wrap.addEventListener('touchend', e => {
+    e.preventDefault();
+    lastTouches = Array.from(e.touches);
+    if (e.touches.length === 0) {
+      wrap.classList.remove('grabbing');
+      panStart = null;
+    } else if (e.touches.length === 1) {
+      panStart = { ox, oy, cx: e.touches[0].clientX, cy: e.touches[0].clientY };
+    }
+  }, { passive: false });
+
+  // ── MOUSE: PAN & WHEEL ZOOM ──────────────────────────────────────────────────
+  let mouseDown = false, mStart = null;
+
+  wrap.addEventListener('mousedown', e => {
+    mouseDown = true;
+    mStart = { ox, oy, cx: e.clientX, cy: e.clientY };
+    wrap.classList.add('grabbing');
+  });
+  window.addEventListener('mousemove', e => {
+    if (!mouseDown || !mStart) return;
+    applyTransform(mStart.ox + e.clientX - mStart.cx, mStart.oy + e.clientY - mStart.cy, scale);
+  });
+  window.addEventListener('mouseup', () => { mouseDown = false; wrap.classList.remove('grabbing'); });
+
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.12 : 0.89;
+    const newScale = Math.min(Math.max(scale * factor, minScale), minScale * 12);
+    const nx = e.clientX - (e.clientX - ox) * (newScale / scale);
+    const ny = e.clientY - (e.clientY - oy) * (newScale / scale);
+    applyTransform(nx, ny, newScale);
+  }, { passive: false });
+
+  // ── DOUBLE-TAP TO RESET ──────────────────────────────────────────────────────
+  let lastTap = 0;
+  wrap.addEventListener('touchend', e => {
+    const now = Date.now();
+    if (now - lastTap < 300) fitToScreen();
+    lastTap = now;
+  });
+
+  // ── RESIZE ───────────────────────────────────────────────────────────────────
+  window.addEventListener('resize', fitToScreen);
+
+  // ── LIST & INFO FUNCTIONS ────────────────────────────────────────────────────
+  let selectedCountry = null;
+
+  function initList() {
+    const listToggle = document.getElementById('list-toggle');
+    const listPanel = document.getElementById('list-panel');
+    const listSearch = document.getElementById('list-search');
+    const listCountries = document.getElementById('list-countries');
+
+    // Toggle list
+    listToggle.addEventListener('click', () => {
+      listPanel.classList.toggle('open');
+    });
+
+    // Render countries
+    function renderCountries(filter = '') {
+      listCountries.innerHTML = '';
+      const filtered = COUNTRIES.filter(c => 
+        c.name.toLowerCase().includes(filter.toLowerCase())
+      );
+
+      filtered.forEach(country => {
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        item.innerHTML = `
+          <div class="list-flag">
+            <img src="${country.flag}" alt="${country.name}">
+          </div>
+          <div class="list-name">${country.name}</div>
+        `;
+        item.addEventListener('click', () => {
+          selectCountry(country);
+          listPanel.classList.remove('open');
+        });
+        listCountries.appendChild(item);
+      });
+    }
+
+    // Search
+    listSearch.addEventListener('input', (e) => {
+      renderCountries(e.target.value);
+    });
+
+    renderCountries();
+  }
+
+  function selectCountry(country) {
+    selectedCountry = country;
+    const newScale = Math.min(5, minScale * 8);
+    const nx = window.innerWidth / 2 - country.coords.x * newScale;
+    const ny = window.innerHeight / 2 - country.coords.y * newScale;
+    applyTransform(nx, ny, newScale);
+    showInfo(country);
+  }
+
+  function showInfo(country) {
+    const popup = document.getElementById('info-popup');
+    document.getElementById('info-title').textContent = country.name;
+    document.getElementById('info-flag').src = country.flag;
+    document.getElementById('info-content').textContent = country.info;
+    
+    popup.classList.add('show');
+    
+    // Store wiki link for click handler
+    window.currentCountryWiki = country.wiki;
+  }
+
+  function openWikipedia() {
+    if (window.currentCountryWiki) {
+      window.open(window.currentCountryWiki, '_blank');
+    }
+  }
+
+  function closeInfo() {
+    document.getElementById('info-popup').classList.remove('show');
+  }
+
+  initList();
+
+  // ── INIT ─────────────────────────────────────────────────────────────────────
+  // Try to load first map immediately, preload rest in background
+  img.src = mapSrc(YEARS[0], TYPES[0]);
+  img.onload = () => {
+    imgW = img.naturalWidth;
+    imgH = img.naturalHeight;
+    img.style.width  = imgW + 'px';
+    img.style.height = imgH + 'px';
+    fitToScreen();
+    loader.classList.add('hidden');
+    // preload rest silently
+    YEARS.forEach(y => TYPES.forEach(t => {
+      if (!(y === 1914 && t === 'country')) {
+        const i = new Image(); i.src = mapSrc(y, t);
+      }
+    }));
+  };
+  img.onerror = () => {
+    // maps folder might be missing — still hide loader
+    loader.classList.add('hidden');
+  };
+
+  updateUI();
+</script>
+</body>
+</html>
