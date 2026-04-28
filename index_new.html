@@ -300,9 +300,12 @@
 
     /* ── INFO POPUP ── */
     #info-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 199;
       display: none;
     }
-    #info-overlay.open {
+    #info-overlay.show {
       display: block;
     }
 
@@ -571,7 +574,7 @@
       name: 'Bulgaristan',
       flag: './flags/bulgaristan.png',
       coords: { x: 4116, y: 2372 },
-      wiki: 'https://en.wikipedia.org/wiki/Bulgaria_during_World_War_I',
+      wiki: 'https://tr.wikipedia.org/wiki/Birinci_D%C3%BCnya_Sava%C5%9F%C4%B1%27nda_Bulgaristan',
       info: 'Bulgaristan, I. Dünya Savaşı’nda 1915’te İttifak Devletleri safına katıldı ve özellikle Balkanlar’da önemli bir rol oynadı. Sırbistan’a karşı Almanya ve Avusturya-Macaristan ile birlikte saldırıya geçerek ülkenin işgal edilmesinde belirleyici oldu. Ayrıca Selanik (Makedonya) Cephesi’nde İtilaf Devletleri’ne karşı uzun süre direndi. Ancak 1918’de bu cephede yaşanan yenilgiler ve iç huzursuzluklar sonucunda ateşkes imzalamak zorunda kaldı ve savaştan çekildi.'
     },
     {
@@ -592,7 +595,7 @@
       name: 'Suudi Emirliği',
       flag: './flags/suudi.png',
       coords: { x: 5520, y: 4056 },
-      wiki: 'https://tr.wikipedia.org/wiki/Birinci_Dünya_Savaşında_Osmanlı_İmparatorluğu',
+      wiki: 'https://tr.wikipedia.org/wiki/Necd_Sultanlığı',
       info: 'Suudi Emirliği, I. Dünya Savaşı sırasında Arap Yarımadası’nda Birleşik Krallık ile dolaylı iş birliği içinde hareket eden Abdülaziz İbn Suud liderliğinde bir güçtü. Osmanlı İmparatorluğu ve onun müttefiki olan Cebel Şammar’a karşı mücadele etti. İngilizlerden mali ve siyasi destek alarak bölgedeki rakiplerine karşı üstünlük sağlamaya çalıştı.'
     },
   ];
@@ -604,35 +607,36 @@
   const MAP_DIR = './maps/';
 
   // ── STATE ───────────────────────────────────────────────────────────────────
-  let yearIdx = 0;
-  let typeIdx = 0;
+  let yearIdx = 0, typeIdx = 0;
+  let scale = 1, ox = 0, oy = 0, imgW = 0, imgH = 0, minScale = 1;
 
-  // Pan / zoom state
-  let scale = 1;
-  let ox = 0, oy = 0;
-  let imgW = 0, imgH = 0;
-  let minScale = 1;
+  const canvas   = document.getElementById('map-canvas');
+  const ctx      = canvas.getContext('2d');
+  const wrap     = document.getElementById('map-wrap');
+  const yearEl   = document.getElementById('year-display');
+  const typeLabel= document.getElementById('type-label');
+  const btnPrev  = document.getElementById('btn-prev');
+  const btnNext  = document.getElementById('btn-next');
+  const loader   = document.getElementById('loader');
 
-  // Canvas render loop
-  const canvas = document.getElementById('map-canvas');
-  const ctx    = canvas.getContext('2d');
-  const wrap   = document.getElementById('map-wrap');
-  const yearEl      = document.getElementById('year-display');
-  const typeLabel   = document.getElementById('type-label');
-  const btnPrev     = document.getElementById('btn-prev');
-  const btnNext     = document.getElementById('btn-next');
-  const loader      = document.getElementById('loader');
+  let currentImage = null;
+  let nextImage    = null;
+  let dirty        = true;
 
-  let currentImage  = null;  // loaded HTMLImageElement
-  let nextImage     = null;  // being loaded
-  let rafId         = null;
-  let dirty         = true;  // needs redraw
+  // ── LOADER: kapat ─────────────────────────────────────────────────────────────
+  // Loader'ı kapat — hiçbir koşula bağlı değil
+  function hideLoader() {
+    loader.style.cssText = 'display:none!important';
+  }
+  // En geç 1.5 saniyede kapat (harita yüklenemese bile)
+  setTimeout(hideLoader, 1500);
 
+  // ── CANVAS ────────────────────────────────────────────────────────────────────
   function resizeCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const vw = window.innerWidth, vh = window.innerHeight;
-    canvas.width  = vw * dpr;
-    canvas.height = vh * dpr;
+    canvas.width  = Math.round(vw * dpr);
+    canvas.height = Math.round(vh * dpr);
     canvas.style.width  = vw + 'px';
     canvas.style.height = vh + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -640,106 +644,82 @@
   }
 
   function draw() {
-    if (!dirty || !currentImage) return;
+    if (!dirty) return;
     dirty = false;
     const vw = window.innerWidth, vh = window.innerHeight;
     ctx.clearRect(0, 0, vw, vh);
-    ctx.drawImage(currentImage, ox, oy, imgW * scale, imgH * scale);
+    if (currentImage) ctx.drawImage(currentImage, ox, oy, imgW * scale, imgH * scale);
   }
 
-  function renderLoop() {
-    draw();
-    rafId = requestAnimationFrame(renderLoop);
-  }
+  (function renderLoop() { draw(); requestAnimationFrame(renderLoop); })();
 
-  // ── HELPERS ─────────────────────────────────────────────────────────────────
-  function mapSrc(year, type) {
-    return `${MAP_DIR}${year}_${type}.jpg`;
-  }
+  // ── HELPERS ───────────────────────────────────────────────────────────────────
+  function mapSrc(year, type) { return `./maps/${year}_${type}.jpg`; }
 
   function clampOffset(x, y, s) {
     const vw = window.innerWidth, vh = window.innerHeight;
     const iw = imgW * s, ih = imgH * s;
-    const minX = iw > vw ? vw - iw : (vw - iw) / 2;
-    const minY = ih > vh ? vh - ih : (vh - ih) / 2;
-    const maxX = iw > vw ? 0 : (vw - iw) / 2;
-    const maxY = ih > vh ? 0 : (vh - ih) / 2;
     return {
-      x: Math.min(maxX, Math.max(minX, x)),
-      y: Math.min(maxY, Math.max(minY, y))
+      x: Math.min(iw > vw ? 0 : (vw-iw)/2, Math.max(iw > vw ? vw-iw : (vw-iw)/2, x)),
+      y: Math.min(ih > vh ? 0 : (vh-ih)/2, Math.max(ih > vh ? vh-ih : (vh-ih)/2, y))
     };
   }
 
   function applyTransform(x, y, s) {
     const c = clampOffset(x, y, s);
-    ox = c.x; oy = c.y; scale = s;
-    dirty = true;
+    ox = c.x; oy = c.y; scale = s; dirty = true;
   }
 
   function fitToScreen() {
     if (!imgW || !imgH) return;
     const vw = window.innerWidth, vh = window.innerHeight;
-    const s = Math.max(vw / imgW, vh / imgH);
-    minScale = s;
-    applyTransform((vw - imgW * s) / 2, (vh - imgH * s) / 2, s);
+    minScale = Math.max(vw / imgW, vh / imgH);
+    applyTransform((vw - imgW * minScale) / 2, (vh - imgH * minScale) / 2, minScale);
   }
 
-  // ── IMAGE LOAD ───────────────────────────────────────────────────────────────
-  function showMap(year, type, animate) {
-    const src = mapSrc(year, type);
-    if (animate) canvas.classList.add('fading');
-
+  // ── IMAGE LOAD ────────────────────────────────────────────────────────────────
+  function loadImage(src, onDone) {
     const img = new Image();
     nextImage = img;
-    img.onload = () => {
-      if (img !== nextImage) return; // superseded
-      if (!imgW) {
-        imgW = img.naturalWidth;
-        imgH = img.naturalHeight;
-        fitToScreen();
-      }
+    function finish() {
+      if (img !== nextImage) return;
+      onDone(img);
+    }
+    img.onload  = finish;
+    img.onerror = () => { if (img === nextImage) onDone(null); };
+    img.src = src;
+    if (img.complete) finish(); // cache hit
+  }
+
+  function showMap(year, type, animate) {
+    if (animate) canvas.classList.add('fading');
+    loadImage(mapSrc(year, type), img => {
+      if (!img) return;
+      if (!imgW) { imgW = img.naturalWidth; imgH = img.naturalHeight; fitToScreen(); }
       currentImage = img;
       dirty = true;
-      if (animate) {
-        setTimeout(() => canvas.classList.remove('fading'), 20);
-      }
-    };
-    img.src = src;
+      if (animate) setTimeout(() => canvas.classList.remove('fading'), 20);
+    });
   }
 
-  function updateUI() {
-    const year = YEARS[yearIdx];
-    const type = TYPES[typeIdx];
-    yearEl.textContent = year;
-    typeLabel.textContent = TYPE_LABELS[type];
+  function updateUI(animate) {
+    yearEl.textContent = YEARS[yearIdx];
+    typeLabel.textContent = TYPE_LABELS[TYPES[typeIdx]];
     btnPrev.disabled = yearIdx === 0;
     btnNext.disabled = yearIdx === YEARS.length - 1;
-    showMap(year, type, true);
+    showMap(YEARS[yearIdx], TYPES[typeIdx], animate);
   }
 
-  // ── YEAR NAV ─────────────────────────────────────────────────────────────────
-  btnPrev.addEventListener('click', () => {
-    if (yearIdx > 0) { yearIdx--; updateUI(); }
-  });
-  btnNext.addEventListener('click', () => {
-    if (yearIdx < YEARS.length - 1) { yearIdx++; updateUI(); }
-  });
-  document.getElementById('type-toggle').addEventListener('click', () => {
-    typeIdx = (typeIdx + 1) % TYPES.length;
-    updateUI();
-  });
+  // ── YEAR / TYPE NAV ───────────────────────────────────────────────────────────
+  btnPrev.addEventListener('click', () => { if (yearIdx > 0) { yearIdx--; updateUI(true); } });
+  btnNext.addEventListener('click', () => { if (yearIdx < YEARS.length-1) { yearIdx++; updateUI(true); } });
+  document.getElementById('type-toggle').addEventListener('click', () => { typeIdx = (typeIdx+1) % TYPES.length; updateUI(true); });
 
-  // ── TOUCH: PAN & PINCH ───────────────────────────────────────────────────────
-  let lastTouches = null;
-  let panStart    = null;
-  let isPinching  = false;
+  // ── TOUCH: PAN & PINCH ────────────────────────────────────────────────────────
+  let lastTouches = null, panStart = null, isPinching = false;
 
-  function getTouchMidpoint(t1, t2) {
-    return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
-  }
-  function getTouchDist(t1, t2) {
-    return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-  }
+  function mid(a, b)  { return { x: (a.clientX+b.clientX)/2, y: (a.clientY+b.clientY)/2 }; }
+  function dist(a, b) { return Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY); }
 
   wrap.addEventListener('touchstart', e => {
     e.preventDefault();
@@ -748,100 +728,61 @@
       isPinching = false;
       panStart = { ox, oy, cx: e.touches[0].clientX, cy: e.touches[0].clientY };
     } else if (e.touches.length === 2) {
-      isPinching = true;
-      panStart = null;
+      isPinching = true; panStart = null;
     }
     wrap.classList.add('grabbing');
   }, { passive: false });
 
   wrap.addEventListener('touchmove', e => {
     e.preventDefault();
-    const touches = Array.from(e.touches);
-
-    if (touches.length === 1 && panStart && !isPinching) {
-      applyTransform(
-        panStart.ox + touches[0].clientX - panStart.cx,
-        panStart.oy + touches[0].clientY - panStart.cy,
-        scale
-      );
-    } else if (touches.length === 2 && lastTouches.length >= 2) {
+    const t = Array.from(e.touches);
+    if (t.length === 1 && panStart && !isPinching) {
+      applyTransform(panStart.ox + t[0].clientX - panStart.cx, panStart.oy + t[0].clientY - panStart.cy, scale);
+    } else if (t.length === 2 && lastTouches.length >= 2) {
       isPinching = true;
-      const prevMid  = getTouchMidpoint(lastTouches[0], lastTouches[1]);
-      const mid      = getTouchMidpoint(touches[0], touches[1]);
-      const factor   = getTouchDist(touches[0], touches[1]) / getTouchDist(lastTouches[0], lastTouches[1]);
-      const newScale = Math.min(Math.max(scale * factor, minScale), minScale * 12);
-      applyTransform(
-        mid.x - (mid.x - ox) * (newScale / scale) + (mid.x - prevMid.x),
-        mid.y - (mid.y - oy) * (newScale / scale) + (mid.y - prevMid.y),
-        newScale
-      );
+      const pm = mid(lastTouches[0], lastTouches[1]), cm = mid(t[0], t[1]);
+      const ns = Math.min(Math.max(scale * dist(t[0],t[1]) / dist(lastTouches[0],lastTouches[1]), minScale), minScale * 12);
+      applyTransform(cm.x - (cm.x - ox) * (ns/scale) + (cm.x - pm.x), cm.y - (cm.y - oy) * (ns/scale) + (cm.y - pm.y), ns);
     }
-
-    lastTouches = touches;
+    lastTouches = t;
   }, { passive: false });
 
   wrap.addEventListener('touchend', e => {
     e.preventDefault();
     lastTouches = Array.from(e.touches);
-    if (e.touches.length === 0) {
-      wrap.classList.remove('grabbing');
-      panStart = null;
-      isPinching = false;
-    } else if (e.touches.length === 1) {
-      isPinching = false;
-      panStart = { ox, oy, cx: e.touches[0].clientX, cy: e.touches[0].clientY };
-    }
+    if (e.touches.length === 0) { wrap.classList.remove('grabbing'); panStart = null; isPinching = false; }
+    else if (e.touches.length === 1) { isPinching = false; panStart = { ox, oy, cx: e.touches[0].clientX, cy: e.touches[0].clientY }; }
   }, { passive: false });
 
-  // ── MOUSE: PAN & WHEEL ZOOM ──────────────────────────────────────────────────
+  // ── MOUSE ─────────────────────────────────────────────────────────────────────
   let mouseDown = false, mStart = null;
-
-  wrap.addEventListener('mousedown', e => {
-    mouseDown = true;
-    mStart = { ox, oy, cx: e.clientX, cy: e.clientY };
-    wrap.classList.add('grabbing');
-  });
-  window.addEventListener('mousemove', e => {
-    if (!mouseDown || !mStart) return;
-    applyTransform(mStart.ox + e.clientX - mStart.cx, mStart.oy + e.clientY - mStart.cy, scale);
-  });
+  wrap.addEventListener('mousedown', e => { mouseDown = true; mStart = { ox, oy, cx: e.clientX, cy: e.clientY }; wrap.classList.add('grabbing'); });
+  window.addEventListener('mousemove', e => { if (mouseDown && mStart) applyTransform(mStart.ox + e.clientX - mStart.cx, mStart.oy + e.clientY - mStart.cy, scale); });
   window.addEventListener('mouseup', () => { mouseDown = false; wrap.classList.remove('grabbing'); });
-
   wrap.addEventListener('wheel', e => {
     e.preventDefault();
-    const factor   = e.deltaY < 0 ? 1.12 : 0.89;
-    const newScale = Math.min(Math.max(scale * factor, minScale), minScale * 12);
-    applyTransform(
-      e.clientX - (e.clientX - ox) * (newScale / scale),
-      e.clientY - (e.clientY - oy) * (newScale / scale),
-      newScale
-    );
+    const ns = Math.min(Math.max(scale * (e.deltaY < 0 ? 1.12 : 0.89), minScale), minScale * 12);
+    applyTransform(e.clientX - (e.clientX - ox) * (ns/scale), e.clientY - (e.clientY - oy) * (ns/scale), ns);
   }, { passive: false });
 
-  // ── DOUBLE-TAP TO RESET ──────────────────────────────────────────────────────
+  // ── DOUBLE-TAP RESET ──────────────────────────────────────────────────────────
   let lastTap = 0;
   wrap.addEventListener('touchend', e => {
     if (isPinching || e.touches.length > 0) return;
     const now = Date.now();
-    if (now - lastTap < 300) animateTo(
-      (window.innerWidth  - imgW * minScale) / 2,
-      (window.innerHeight - imgH * minScale) / 2,
-      minScale, 500
-    );
+    if (now - lastTap < 300) animateTo((window.innerWidth - imgW*minScale)/2, (window.innerHeight - imgH*minScale)/2, minScale, 500);
     lastTap = now;
   });
 
-  // ── RESIZE ───────────────────────────────────────────────────────────────────
+  // ── RESIZE ────────────────────────────────────────────────────────────────────
   window.addEventListener('resize', () => {
     resizeCanvas();
     if (!imgW || !imgH) return;
-    const vw = window.innerWidth, vh = window.innerHeight;
-    const s = Math.max(vw / imgW, vh / imgH);
-    minScale = s;
+    minScale = Math.max(window.innerWidth/imgW, window.innerHeight/imgH);
     applyTransform(ox, oy, Math.max(scale, minScale));
   });
 
-  // ── LIST & INFO FUNCTIONS ────────────────────────────────────────────────────
+  // ── LIST ──────────────────────────────────────────────────────────────────────
   let selectedCountry = null;
 
   function initList() {
@@ -849,65 +790,45 @@
     const listPanel     = document.getElementById('list-panel');
     const listSearch    = document.getElementById('list-search');
     const listCountries = document.getElementById('list-countries');
-
     listToggle.addEventListener('click', () => listPanel.classList.toggle('open'));
-
     function renderCountries(filter = '') {
       listCountries.innerHTML = '';
-      COUNTRIES.filter(c => c.name.toLowerCase().includes(filter.toLowerCase()))
-        .forEach(country => {
-          const item = document.createElement('div');
-          item.className = 'list-item';
-          item.innerHTML = `
-            <div class="list-flag"><img src="${country.flag}" alt="${country.name}"></div>
-            <div class="list-name">${country.name}</div>
-          `;
-          item.addEventListener('click', () => {
-            selectCountry(country);
-            listPanel.classList.remove('open');
-          });
-          listCountries.appendChild(item);
-        });
+      COUNTRIES.filter(c => c.name.toLowerCase().includes(filter.toLowerCase())).forEach(country => {
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        item.innerHTML = `<div class="list-flag"><img src="${country.flag}" alt="${country.name}"></div><div class="list-name">${country.name}</div>`;
+        item.addEventListener('click', () => { selectCountry(country); listPanel.classList.remove('open'); });
+        listCountries.appendChild(item);
+      });
     }
-
     listSearch.addEventListener('input', e => renderCountries(e.target.value));
     renderCountries();
   }
 
-  // ── ANIMATE TO ───────────────────────────────────────────────────────────────
-  function animateTo(targetX, targetY, targetScale, duration, onDone) {
-    const startX = ox, startY = oy, startScale = scale;
-    const startTime = performance.now();
-    function ease(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
-    function step(now) {
-      const t = Math.min((now - startTime) / duration, 1);
-      applyTransform(
-        startX + (targetX - startX) * ease(t),
-        startY + (targetY - startY) * ease(t),
-        startScale + (targetScale - startScale) * ease(t)
-      );
-      if (t < 1) requestAnimationFrame(step);
-      else if (onDone) onDone();
-    }
-    requestAnimationFrame(step);
+  // ── ANIMATE TO ────────────────────────────────────────────────────────────────
+  function animateTo(tx, ty, ts, dur, onDone) {
+    const sx = ox, sy = oy, ss = scale, t0 = performance.now();
+    function ease(t) { return t < .5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
+    (function step(now) {
+      const t = Math.min((now-t0)/dur, 1), e = ease(t);
+      applyTransform(sx+(tx-sx)*e, sy+(ty-sy)*e, ss+(ts-ss)*e);
+      if (t < 1) requestAnimationFrame(step); else if (onDone) onDone();
+    })(performance.now());
   }
 
   function selectCountry(country) {
     selectedCountry = country;
-    const newScale = Math.min(minScale * 4, 3);
-    animateTo(
-      window.innerWidth  / 2 - country.coords.x * newScale,
-      window.innerHeight / 2 - country.coords.y * newScale,
-      newScale, 900, () => showInfo(country)
-    );
+    const ns = Math.min(minScale * 4, 3);
+    animateTo(window.innerWidth/2 - country.coords.x*ns, window.innerHeight/2 - country.coords.y*ns, ns, 900, () => showInfo(country));
   }
 
+  // ── INFO POPUP ────────────────────────────────────────────────────────────────
   function showInfo(country) {
-    const popup = document.getElementById('info-popup');
     document.getElementById('info-title').textContent   = country.name;
     document.getElementById('info-flag').src            = country.flag;
     document.getElementById('info-content').textContent = country.info;
-    popup.classList.add('show');
+    document.getElementById('info-overlay').classList.add('show');
+    document.getElementById('info-popup').classList.add('show');
     window.currentCountryWiki = country.wiki;
   }
 
@@ -917,57 +838,30 @@
 
   function closeInfo() {
     document.getElementById('info-popup').classList.remove('show');
+    document.getElementById('info-overlay').classList.remove('show');
   }
 
   initList();
 
-  // ── INIT ─────────────────────────────────────────────────────────────────────
+  // ── INIT ──────────────────────────────────────────────────────────────────────
   resizeCanvas();
-  renderLoop();
+  updateUI(false);
 
-  // Labels/buttons
-  yearEl.textContent  = YEARS[yearIdx];
-  typeLabel.textContent = TYPE_LABELS[TYPES[typeIdx]];
-  btnPrev.disabled = true;
-  btnNext.disabled = false;
+  // İlk harita yüklenince loader'ı kapat
+  loadImage(mapSrc(YEARS[0], TYPES[0]), img => {
+    if (img) {
+      imgW = img.naturalWidth; imgH = img.naturalHeight;
+      fitToScreen(); currentImage = img; dirty = true;
+    }
+    hideLoader();
+    // Diğer haritaları sessizce ön yükle
+    requestAnimationFrame(() => {
+      YEARS.forEach(y => TYPES.forEach(t => {
+        if (!(y === YEARS[0] && t === TYPES[0])) { const i = new Image(); i.src = mapSrc(y, t); }
+      }));
+    });
+  });
 
-  function hideLoader() {
-    loader.style.display = 'none';
-  }
-  setTimeout(hideLoader, 2000);
-
-  function loadFirstMap() {
-    const src = mapSrc(YEARS[0], TYPES[0]);
-    const img = new Image();
-
-    const done = () => {
-      if (img.naturalWidth) {
-        imgW = img.naturalWidth;
-        imgH = img.naturalHeight;
-        fitToScreen();
-        currentImage = img;
-        dirty = true;
-      }
-      hideLoader();
-      // Preload others after first paint
-      requestAnimationFrame(() => {
-        YEARS.forEach(y => TYPES.forEach(t => {
-          if (!(y === YEARS[0] && t === TYPES[0])) {
-            const i = new Image(); i.src = mapSrc(y, t);
-          }
-        }));
-      });
-    };
-
-    img.onload  = done;
-    img.onerror = done; // hide loader even if maps folder is missing
-    img.src = src;
-
-    // If cached, onload may already have fired before assignment on some browsers
-    if (img.complete && img.naturalWidth) done();
-  }
-
-  loadFirstMap();
 </script>
 </body>
 </html>
