@@ -674,6 +674,9 @@
   // ── TOUCH: PAN & PINCH ───────────────────────────────────────────────────────
   let lastTouches = null;
   let panStart = null;
+  let isPinching = false;
+  let rafPending = false;
+  let pendingX, pendingY, pendingS;
 
   function getTouchMidpoint(t1, t2) {
     return {
@@ -686,11 +689,26 @@
     return Math.hypot(dx, dy);
   }
 
+  function scheduleTransform(x, y, s) {
+    pendingX = x; pendingY = y; pendingS = s;
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(() => {
+        applyTransform(pendingX, pendingY, pendingS);
+        rafPending = false;
+      });
+    }
+  }
+
   wrap.addEventListener('touchstart', e => {
     e.preventDefault();
     lastTouches = Array.from(e.touches);
     if (e.touches.length === 1) {
+      isPinching = false;
       panStart = { ox, oy, cx: e.touches[0].clientX, cy: e.touches[0].clientY };
+    } else if (e.touches.length === 2) {
+      isPinching = true;
+      panStart = null;
     }
     wrap.classList.add('grabbing');
   }, { passive: false });
@@ -699,28 +717,27 @@
     e.preventDefault();
     const touches = Array.from(e.touches);
 
-    if (touches.length === 1 && panStart) {
+    if (touches.length === 1 && panStart && !isPinching) {
       const dx = touches[0].clientX - panStart.cx;
       const dy = touches[0].clientY - panStart.cy;
-      applyTransform(panStart.ox + dx, panStart.oy + dy, scale);
+      scheduleTransform(panStart.ox + dx, panStart.oy + dy, scale);
 
     } else if (touches.length === 2 && lastTouches.length >= 2) {
+      isPinching = true;
       const prevDist = getTouchDist(lastTouches[0], lastTouches[1]);
       const newDist  = getTouchDist(touches[0], touches[1]);
       const factor   = newDist / prevDist;
 
-      const mid = getTouchMidpoint(touches[0], touches[1]);
+      const prevMid = getTouchMidpoint(lastTouches[0], lastTouches[1]);
+      const mid     = getTouchMidpoint(touches[0], touches[1]);
+
       const newScale = Math.min(Math.max(scale * factor, minScale), minScale * 12);
 
-      // Zoom toward midpoint
-      const nx = mid.x - (mid.x - ox) * (newScale / scale);
-      const ny = mid.y - (mid.y - oy) * (newScale / scale);
-      applyTransform(nx, ny, newScale);
+      // Zoom toward midpoint + pan delta in one calculation
+      const zx = mid.x - (mid.x - ox) * (newScale / scale) + (mid.x - prevMid.x);
+      const zy = mid.y - (mid.y - oy) * (newScale / scale) + (mid.y - prevMid.y);
 
-      // Also pan with midpoint movement
-      const prevMid = getTouchMidpoint(lastTouches[0], lastTouches[1]);
-      const pdx = mid.x - prevMid.x, pdy = mid.y - prevMid.y;
-      applyTransform(ox + pdx, oy + pdy, scale);
+      scheduleTransform(zx, zy, newScale);
     }
 
     lastTouches = touches;
@@ -732,7 +749,9 @@
     if (e.touches.length === 0) {
       wrap.classList.remove('grabbing');
       panStart = null;
+      isPinching = false;
     } else if (e.touches.length === 1) {
+      isPinching = false;
       panStart = { ox, oy, cx: e.touches[0].clientX, cy: e.touches[0].clientY };
     }
   }, { passive: false });
@@ -763,13 +782,25 @@
   // ── DOUBLE-TAP TO RESET ──────────────────────────────────────────────────────
   let lastTap = 0;
   wrap.addEventListener('touchend', e => {
+    if (isPinching || e.touches.length > 0) return;
     const now = Date.now();
-    if (now - lastTap < 300) fitToScreen();
+    if (now - lastTap < 300) animateTo(
+      (window.innerWidth  - imgW * minScale) / 2,
+      (window.innerHeight - imgH * minScale) / 2,
+      minScale, 500
+    );
     lastTap = now;
   });
 
   // ── RESIZE ───────────────────────────────────────────────────────────────────
-  window.addEventListener('resize', fitToScreen);
+  window.addEventListener('resize', () => {
+    if (!imgW || !imgH) return;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const s = Math.max(vw / imgW, vh / imgH);
+    minScale = s;
+    // Keep current position/zoom, just clamp so it stays valid
+    applyTransform(ox, oy, Math.max(scale, minScale));
+  });
 
   // ── LIST & INFO FUNCTIONS ────────────────────────────────────────────────────
   let selectedCountry = null;
