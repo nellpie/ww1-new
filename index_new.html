@@ -180,10 +180,7 @@
       align-items: center; justify-content: center;
       gap: 16px;
       z-index: 100;
-      transition: opacity 0.35s;
     }
-    #loader.hiding { opacity: 0; pointer-events: none; }
-    #loader.hidden { display: none; }
 
     #loader-title {
       font-family: 'Cinzel', serif;
@@ -935,13 +932,9 @@
   btnNext.disabled = false;
 
   function hideLoader() {
-    if (loader.classList.contains('hidden')) return;
-    loader.classList.add('hiding');
-    setTimeout(() => loader.classList.add('hidden'), 380);
+    loader.style.display = 'none';
   }
-
-  // Failsafe: always hide after 5s no matter what
-  setTimeout(hideLoader, 5000);
+  setTimeout(hideLoader, 2000);
 
   function loadFirstMap() {
     const src = mapSrc(YEARS[0], TYPES[0]);
