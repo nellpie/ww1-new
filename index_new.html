@@ -813,13 +813,41 @@
     renderCountries();
   }
 
+  function animateTo(targetX, targetY, targetScale, duration, onDone) {
+    const startX = ox, startY = oy, startScale = scale;
+    const startTime = performance.now();
+
+    function ease(t) {
+      // Cubic ease-in-out
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function step(now) {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      const e = ease(t);
+
+      const cx = startX + (targetX - startX) * e;
+      const cy = startY + (targetY - startY) * e;
+      const cs = startScale + (targetScale - startScale) * e;
+      applyTransform(cx, cy, cs);
+
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        if (onDone) onDone();
+      }
+    }
+
+    requestAnimationFrame(step);
+  }
+
   function selectCountry(country) {
     selectedCountry = country;
-    const newScale = Math.min(5, minScale * 8);
+    const newScale = Math.min(minScale * 4, 3);
     const nx = window.innerWidth / 2 - country.coords.x * newScale;
     const ny = window.innerHeight / 2 - country.coords.y * newScale;
-    applyTransform(nx, ny, newScale);
-    showInfo(country);
+    animateTo(nx, ny, newScale, 900, () => showInfo(country));
   }
 
   function showInfo(country) {
